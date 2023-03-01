@@ -1,0 +1,10 @@
+[workspace]
+members = ["core", "relay"]
+
+[workspace.dependencies]
+anyhow = "1"
+ecdsa = { version = "0.15", features = ["signing", "verifying"] }
+k256 = "0.12"
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_test = "1"
