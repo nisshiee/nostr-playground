@@ -1,24 +1,44 @@
 use chrono::{DateTime, Utc};
+use ecdsa::signature::Verifier;
+use k256::schnorr::{Signature, VerifyingKey};
+// use ecdsa::{
+//     elliptic_curve::{NonZeroScalar, PublicKey},
+//     signature::Verifier,
+//     Signature, VerifyingKey,
+// };
+// use k256::Secp256k1;
 use serde::{Deserialize, Serialize};
+
+use crate::{canonical_event, serde::bytes::to_string, CanonicalEvent, Pubkey};
 
 mod tag;
 pub use tag::Tag;
 
-mod bytes;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawEvent {
-    #[serde(with = "bytes")]
+    #[serde(with = "crate::serde::bytes")]
     pub id: [u8; 32],
-    #[serde(with = "bytes")]
-    pub pubkey: [u8; 32],
+    pub pubkey: Pubkey,
     #[serde(with = "chrono::serde::ts_seconds")]
     pub created_at: DateTime<Utc>,
     pub kind: u32,
     pub tags: Vec<Tag>,
     pub content: String,
-    #[serde(with = "bytes")]
+    #[serde(with = "crate::serde::bytes")]
     pub sig: [u8; 64],
+}
+
+impl RawEvent {
+    pub fn verify(self) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(self.pubkey.as_slice()) else { return false };
+        let Ok(signature) = Signature::try_from(self.sig.as_slice()) else { return false };
+
+        let canonical_event = CanonicalEvent::from(self);
+        let canonical_event = canonical_event.to_string();
+        let canonical_event = canonical_event.as_bytes();
+
+        verifying_key.verify(canonical_event, &signature).is_ok()
+    }
 }
 
 #[cfg(test)]
@@ -36,11 +56,11 @@ mod tests {
                 0xff, 0x63, 0x45, 0x05, 0xf4, 0xcf, 0x7f, 0x38, 0x41, 0xd3, 0xe9, 0x47, 0x33, 0x37,
                 0x37, 0x43, 0x73, 0x74,
             ],
-            pubkey: [
+            pubkey: Pubkey::new([
                 0x73, 0x49, 0x15, 0x09, 0xb8, 0xe2, 0xd8, 0x08, 0x40, 0x87, 0x3b, 0x5a, 0x13, 0xba,
                 0x98, 0xa5, 0xd1, 0xac, 0x3a, 0x16, 0xc9, 0x29, 0x2e, 0x10, 0x6b, 0x1f, 0x2e, 0xda,
                 0x31, 0x15, 0x2c, 0x52,
-            ],
+            ]),
             created_at: Utc.timestamp_opt(1677538187, 0).unwrap(),
             kind: 1,
             tags: vec![Tag {
@@ -82,5 +102,34 @@ mod tests {
         ];
 
         assert_tokens(&raw_event, &serialized);
+    }
+
+    #[test]
+    fn verify() {
+        let raw_event = RawEvent {
+            id: [
+                0xb8, 0xe9, 0x21, 0x46, 0xc5, 0xd3, 0xc0, 0x06, 0xb2, 0xde, 0x7b, 0x2a, 0xbb, 0xdb,
+                0x5f, 0xb7, 0xb5, 0xbc, 0x39, 0xde, 0xc4, 0x78, 0xa9, 0x73, 0x93, 0x36, 0x94, 0x99,
+                0x95, 0x2e, 0xbb, 0x62,
+            ],
+            pubkey: Pubkey::new([
+                0x73, 0x49, 0x15, 0x09, 0xb8, 0xe2, 0xd8, 0x08, 0x40, 0x87, 0x3b, 0x5a, 0x13, 0xba,
+                0x98, 0xa5, 0xd1, 0xac, 0x3a, 0x16, 0xc9, 0x29, 0x2e, 0x10, 0x6b, 0x1f, 0x2e, 0xda,
+                0x31, 0x15, 0x2c, 0x52,
+            ]),
+            created_at: Utc.timestamp_opt(1677711753, 0).unwrap(),
+            kind: 1,
+            tags: vec![],
+            content: "おはのすー".to_string(),
+            sig: [
+                0x10, 0xc6, 0x15, 0x4f, 0xd6, 0x36, 0x54, 0xf7, 0xd7, 0xbd, 0x24, 0xa0, 0x9e, 0xf4,
+                0x05, 0x42, 0xdb, 0x81, 0x1f, 0xf0, 0x64, 0x1a, 0x94, 0x2f, 0x50, 0x78, 0xf1, 0x56,
+                0xcc, 0x23, 0x72, 0xb7, 0xd5, 0x33, 0xae, 0x5e, 0x66, 0xe6, 0x10, 0x13, 0x9a, 0xd3,
+                0xdb, 0xfe, 0xed, 0x38, 0x7e, 0x86, 0xbf, 0xaf, 0x09, 0x25, 0x03, 0x6b, 0xce, 0x8c,
+                0x56, 0xca, 0x75, 0x5a, 0x57, 0x60, 0xb1, 0x74,
+            ],
+        };
+
+        assert!(raw_event.verify());
     }
 }

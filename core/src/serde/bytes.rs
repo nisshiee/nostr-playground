@@ -1,14 +1,18 @@
 use serde::{Deserializer, Serializer};
 
-pub fn serialize<S, const N: usize>(value: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
+pub fn to_string<const N: usize>(value: &[u8; N]) -> String {
     let mut str = String::with_capacity(N * 2);
     for byte in value.iter() {
         str.push_str(&format!("{:02x}", byte));
     }
-    serializer.serialize_str(&str)
+    str
+}
+
+pub fn serialize<S, const N: usize>(value: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&to_string(value))
 }
 
 struct BytesVisitor<const N: usize>;
