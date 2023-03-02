@@ -24,7 +24,7 @@ impl TryFrom<Vec<String>> for Tag {
             anyhow::bail!("Tag must have at least 2 elements");
         }
 
-        let mut parameters = value.clone();
+        let mut parameters = value;
         let name = parameters.remove(0);
         let value = parameters.remove(0);
 

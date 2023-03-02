@@ -7,15 +7,15 @@ use crate::{
     Pubkey,
 };
 
-pub struct CanonicalEvent {
+pub struct CanonicalEvent<'a> {
     pub pubkey: Pubkey,
     pub created_at: DateTime<Utc>,
     pub kind: u32,
-    pub tags: Vec<Tag>,
-    pub content: String,
+    pub tags: &'a Vec<Tag>,
+    pub content: &'a str,
 }
 
-impl CanonicalEvent {
+impl<'a> CanonicalEvent<'a> {
     pub fn to_sha256(&self) -> [u8; 32] {
         let canonical_event = self.to_string();
         let mut hasher = Sha256::new();
@@ -26,25 +26,25 @@ impl CanonicalEvent {
     }
 }
 
-impl ToString for CanonicalEvent {
+impl<'a> ToString for CanonicalEvent<'a> {
     fn to_string(&self) -> String {
         serde_json::to_string(&self).unwrap()
     }
 }
 
-impl From<RawEvent> for CanonicalEvent {
-    fn from(raw_event: RawEvent) -> Self {
+impl<'a> From<&'a RawEvent> for CanonicalEvent<'a> {
+    fn from(raw_event: &'a RawEvent) -> Self {
         CanonicalEvent {
             pubkey: raw_event.pubkey,
             created_at: raw_event.created_at,
             kind: raw_event.kind,
-            tags: raw_event.tags,
-            content: raw_event.content,
+            tags: &raw_event.tags,
+            content: &raw_event.content,
         }
     }
 }
 
-impl Serialize for CanonicalEvent {
+impl<'a> Serialize for CanonicalEvent<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -77,8 +77,8 @@ mod tests {
             ]),
             created_at: Utc.timestamp_opt(1677538187, 0).unwrap(),
             kind: 1,
-            tags: vec![],
-            content: "content".to_string(),
+            tags: &vec![],
+            content: "content",
         };
 
         let got = serde_json::to_string(&canonical_event).unwrap();
@@ -98,8 +98,8 @@ mod tests {
             ]),
             created_at: Utc.timestamp_opt(1677711753, 0).unwrap(),
             kind: 1,
-            tags: vec![],
-            content: "おはのすー".to_string(),
+            tags: &vec![],
+            content: "おはのすー",
         };
 
         let got = canonical_event.to_sha256();
