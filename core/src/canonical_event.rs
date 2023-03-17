@@ -24,23 +24,21 @@ impl<'a> CanonicalEvent<'a> {
         hash.copy_from_slice(hasher.finalize().as_slice());
         hash
     }
-}
 
-impl<'a> ToString for CanonicalEvent<'a> {
-    fn to_string(&self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
-}
-
-impl<'a> From<&'a RawEvent> for CanonicalEvent<'a> {
-    fn from(raw_event: &'a RawEvent) -> Self {
-        CanonicalEvent {
+    pub fn from_raw_event(raw_event: &'a RawEvent) -> Self {
+        Self {
             pubkey: raw_event.pubkey,
             created_at: raw_event.created_at,
             kind: raw_event.kind,
             tags: &raw_event.tags,
             content: &raw_event.content,
         }
+    }
+}
+
+impl<'a> ToString for CanonicalEvent<'a> {
+    fn to_string(&self) -> String {
+        serde_json::to_string(&self).unwrap()
     }
 }
 

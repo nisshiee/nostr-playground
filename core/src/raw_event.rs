@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use ecdsa::signature::Verifier;
-use k256::schnorr::{Signature, VerifyingKey};
+use ecdsa::signature::{Signer, Verifier};
+use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-use crate::{CanonicalEvent, Pubkey};
+use crate::{CanonicalEvent, Pubkey, Seckey};
 
 mod tag;
 pub use tag::Tag;
@@ -23,8 +23,12 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
+    pub fn to_canonical_event(&self) -> CanonicalEvent {
+        CanonicalEvent::from_raw_event(self)
+    }
+
     pub fn verify(&self) -> bool {
-        let canonical_event = CanonicalEvent::from(self);
+        let canonical_event = self.to_canonical_event();
 
         // check id
         let want_id = canonical_event.to_sha256();
@@ -40,6 +44,22 @@ impl RawEvent {
         let message = message.as_bytes();
 
         verifying_key.verify(message, &signature).is_ok()
+    }
+
+    pub fn sign(&mut self, seckey: &Seckey) {
+        self.pubkey = seckey.to_pubkey();
+
+        // canonical eventにpubkeyが含まれるため、先にpubkeyをセットする
+        let (id, message) = {
+            let canonical_event = self.to_canonical_event();
+            (canonical_event.to_sha256(), canonical_event.to_string())
+        };
+
+        let signing_key = SigningKey::from_bytes(seckey.as_slice()).unwrap();
+        let signature = signing_key.sign(message.as_bytes());
+
+        self.id = id;
+        self.sig = signature.to_bytes();
     }
 }
 
@@ -191,5 +211,43 @@ mod tests {
         };
 
         assert!(!raw_event.verify());
+    }
+
+    #[test]
+    fn sign() {
+        let mut raw_event = RawEvent {
+            id: [0; 32],
+            pubkey: Pubkey::new([0; 32]),
+            created_at: Utc.timestamp_opt(1679033936, 0).unwrap(),
+            kind: 1,
+            tags: vec![],
+            content: "はろー".to_string(),
+            sig: [0; 64],
+        };
+        let seckey = Seckey::new([
+            0x42, 0xfe, 0x0b, 0x0c, 0x3b, 0x82, 0x2e, 0x2b, 0x64, 0x75, 0x68, 0x30, 0x9c, 0xb0,
+            0xa6, 0x16, 0x96, 0xdc, 0x88, 0x3b, 0xb5, 0x89, 0x01, 0x36, 0x77, 0xc9, 0xf7, 0x47,
+            0x0e, 0x93, 0xf7, 0x7f,
+        ]);
+
+        raw_event.sign(&seckey);
+
+        assert_eq!(
+            raw_event.pubkey,
+            Pubkey::new([
+                0x64, 0xb5, 0x68, 0x74, 0x64, 0xa1, 0x37, 0x55, 0xeb, 0x23, 0x77, 0x8a, 0xfc, 0x20,
+                0x0e, 0xd4, 0xfa, 0xbb, 0x7b, 0xb2, 0x2f, 0xf4, 0x21, 0xa9, 0xff, 0x05, 0x0a, 0xd6,
+                0x58, 0xb9, 0x85, 0x95,
+            ])
+        );
+        assert_eq!(
+            raw_event.id,
+            [
+                0x12, 0xd3, 0x1b, 0xdc, 0xbc, 0x88, 0xea, 0xf4, 0xca, 0xa3, 0xf3, 0x8e, 0x92, 0xee,
+                0x60, 0xed, 0x91, 0x3c, 0x9f, 0x3d, 0x6a, 0x15, 0xb0, 0xf3, 0x9f, 0xd8, 0xf3, 0xc9,
+                0xf6, 0xa5, 0xc4, 0xa9,
+            ]
+        );
+        assert!(raw_event.verify());
     }
 }

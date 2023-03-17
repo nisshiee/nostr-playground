@@ -3,6 +3,9 @@ mod serde;
 mod pubkey;
 pub use pubkey::Pubkey;
 
+mod seckey;
+pub use seckey::Seckey;
+
 mod canonical_event;
 use canonical_event::CanonicalEvent;
 
