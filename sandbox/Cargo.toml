@@ -11,6 +11,6 @@ nostr-core = { path = "../core" }
 tokio-tungstenite = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
-futures-util = "0.3"
+futures-util = { workspace = true }
 # futures-sink = "0.3"
 serde_json = { workspace = true }

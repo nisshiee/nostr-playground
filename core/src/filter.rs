@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Filter {}
+#[serde(transparent)]
+pub struct Filter(serde_json::Value);
+// TODO: 仮

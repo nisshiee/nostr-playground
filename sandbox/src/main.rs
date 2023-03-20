@@ -5,7 +5,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/client.rs
 #[tokio::main]
 async fn main() {
-    let url = url::Url::parse("wss://relay.snort.social").unwrap();
+    let url = url::Url::parse("ws://localhost:8080").unwrap();
 
     let seckey = Seckey::new([
         0x23, 0xaf, 0x29, 0xe0, 0xf8, 0xed, 0xbd, 0x6b, 0xcd, 0x49, 0x8d, 0x00, 0xcb, 0xea, 0x1c,
