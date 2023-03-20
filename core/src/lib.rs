@@ -14,3 +14,15 @@ pub use raw_event::RawEvent;
 
 mod event;
 pub use event::Event;
+
+mod request;
+pub use request::Request;
+
+mod subscription_id;
+pub use subscription_id::SubscriptionId;
+
+mod filter;
+pub use filter::Filter;
+
+mod response;
+pub use response::Response;

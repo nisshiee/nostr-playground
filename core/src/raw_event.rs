@@ -23,6 +23,18 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
+    pub fn new(kind: u32, tags: Vec<Tag>, content: String) -> Self {
+        Self {
+            id: [0; 32],
+            pubkey: Pubkey::default(),
+            created_at: Utc::now(),
+            kind,
+            tags,
+            content,
+            sig: [0; 64],
+        }
+    }
+
     pub fn to_canonical_event(&self) -> CanonicalEvent {
         CanonicalEvent::from_raw_event(self)
     }
