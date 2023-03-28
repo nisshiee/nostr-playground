@@ -588,6 +588,7 @@ dependencies = [
  "serde_json",
  "serde_test",
  "sha2",
+ "url",
 ]
 
 [[package]]
@@ -816,6 +817,7 @@ dependencies = [
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -1356,6 +1358,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]

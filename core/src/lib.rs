@@ -26,3 +26,6 @@ pub use filter::Filter;
 
 mod response;
 pub use response::Response;
+
+mod relay_information;
+pub use relay_information::{Limitation, RelayInformation};
