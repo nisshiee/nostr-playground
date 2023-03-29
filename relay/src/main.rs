@@ -23,6 +23,15 @@ use tokio_tungstenite::{
 };
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
+mod connection;
+pub use connection::Connection;
+
+mod connections;
+pub use connections::Connections;
+
+mod context;
+pub use context::{Connections, Context};
+
 #[cfg(debug_assertions)]
 const BIND_HOST: &str = "127.0.0.1:8080";
 #[cfg(not(debug_assertions))]
