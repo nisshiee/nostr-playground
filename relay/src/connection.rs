@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
-use futures_util::StreamExt;
+use futures_util::{pin_mut, Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
 use nostr_core::Request;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
@@ -26,16 +26,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn new(
-        ctx: Context,
-        ws_stream: WebSocketStream<Upgraded>,
-        addr: SocketAddr,
-        mut handle_request: impl FnMut(Context, Request) -> anyhow::Result<()> + Send + 'static,
-    ) {
+    pub async fn new(ctx: Context, ws_stream: WebSocketStream<Upgraded>, addr: SocketAddr) {
         tracing::info!("WebSocket connection established: {}", addr);
 
         let (tx, rx) = unbounded_channel();
-        let (outgoing, mut incoming) = ws_stream.split();
+        let (outgoing, incoming) = ws_stream.split();
         let connection = Self {
             addr,
             tx,
@@ -43,23 +38,29 @@ impl Connection {
         };
         ctx.connections.insert(connection).await;
 
-        let connections_ref = ctx.connections.clone();
+        Self::spawn_outgoing_stream(rx, outgoing);
+        Self::spawn_incoming_stream(ctx, addr, incoming);
+    }
+
+    fn spawn_outgoing_stream<S>(rx: UnboundedReceiver<Message>, outgoing: S)
+    where
+        S: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Send + 'static,
+    {
         tokio::spawn(async move {
             UnboundedReceiverStream::new(rx)
                 .map(Ok)
                 .forward(outgoing)
                 .await
                 .ok();
-
-            let connection_ref = connections_ref.get_connection_mut(addr).await;
-            if let Some(mut c) = connection_ref {
-                c.status = Status::Closed;
-                c.remove();
-            };
         });
+    }
 
-        let connections_ref = ctx.connections.clone();
+    fn spawn_incoming_stream<S>(ctx: Context, addr: SocketAddr, incoming: S)
+    where
+        S: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Send + 'static,
+    {
         tokio::spawn(async move {
+            pin_mut!(incoming);
             while let Some(msg) = incoming.next().await {
                 if let Ok(ref msg) = msg {
                     tracing::info!(message = ?msg, "received");
@@ -74,14 +75,11 @@ impl Connection {
                             }
                         };
                         tracing::info!(request = ?req, "request");
-                        if let Err(error) = handle_request(ctx.clone(), req) {
-                            tracing::error!(?error, "Error handling request");
-                        }
                     }
                     Ok(Message::Close(_)) => {
                         tracing::info!("closing connection");
-                        let connection_ref = connections_ref.get_connection_mut(addr).await;
-                        if let Some(mut c) = connection_ref {
+                        let connection = ctx.connections.get_connection_mut(addr).await;
+                        if let Some(mut c) = connection {
                             if c.status == Status::CloseRequesting {
                                 tracing::info!("receive reply close handshake");
                             } else {
@@ -91,6 +89,11 @@ impl Connection {
                             c.remove();
                         }
                         break;
+                    }
+                    Ok(Message::Ping(_)) => {
+                        if let Some(c) = ctx.connections.get_connection_mut(addr).await {
+                            c.send_raw(Message::Pong(vec![]));
+                        }
                     }
                     // TODO: PING, PONG, CLOSEを良い感じに
                     Ok(_) => {

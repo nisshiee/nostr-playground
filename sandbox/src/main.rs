@@ -33,6 +33,8 @@ async fn main() {
     let message: Message = event.into();
     write.send(message).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
+    write.send(Message::Ping(vec![])).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
     write.send(Message::Close(None)).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     write.close().await.unwrap();

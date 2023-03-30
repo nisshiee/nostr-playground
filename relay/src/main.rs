@@ -12,11 +12,11 @@ use hyper::{
     upgrade::Upgraded,
     Method, Server, StatusCode, Version,
 };
-use nostr_core::{RelayInformation, Request};
+use nostr_core::RelayInformation;
 use signal_hook::consts::SIGINT;
 use signal_hook_tokio::Signals;
 use tokio_tungstenite::{
-    tungstenite::{handshake::derive_accept_key, protocol::Role, Message},
+    tungstenite::{handshake::derive_accept_key, protocol::Role},
     WebSocketStream,
 };
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
@@ -176,23 +176,7 @@ async fn handle_connection(
     ws_stream: WebSocketStream<Upgraded>,
     addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    Connection::new(ctx, ws_stream, addr, |_ctx, _req| Ok(())).await;
-    Ok(())
-}
-
-#[tracing::instrument(skip_all)]
-async fn handle_message(msg: Message) -> anyhow::Result<()> {
-    tracing::debug!(message = ?msg, "raw message");
-    match msg {
-        Message::Text(text) => {
-            let req = serde_json::from_str::<Request>(&text)?;
-            tracing::info!(request = ?req, "request");
-        }
-        _ => {
-            tracing::debug!("ignore non-text message");
-        }
-    }
-
+    Connection::new(ctx, ws_stream, addr).await;
     Ok(())
 }
 
