@@ -6,7 +6,7 @@ use std::{
 };
 
 use tokio::sync::{Mutex, MutexGuard};
-use tokio_tungstenite::tungstenite::Message;
+
 
 use crate::Connection;
 
@@ -31,7 +31,7 @@ impl Connections {
         let inner = self.inner.lock().await;
         inner
             .contains_key(&addr)
-            .then(|| ConnectionGuard { inner, addr })
+            .then_some(ConnectionGuard { inner, addr })
     }
 
     pub async fn close_all(&self) {
@@ -42,7 +42,7 @@ impl Connections {
     }
 }
 
-struct ConnectionGuard<'a> {
+pub struct ConnectionGuard<'a> {
     inner: MutexGuard<'a, HashMap<SocketAddr, Connection>>,
     addr: SocketAddr,
 }
@@ -63,6 +63,6 @@ impl Deref for ConnectionGuard<'_> {
 
 impl DerefMut for ConnectionGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.get_mut(&self.addr).unwrap()
+        self.inner.get_mut(&self.addr).unwrap()
     }
 }

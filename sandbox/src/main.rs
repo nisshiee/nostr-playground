@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures_util::{pin_mut, SinkExt, StreamExt};
 use nostr_core::{RawEvent, Seckey};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -5,8 +7,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/client.rs
 #[tokio::main]
 async fn main() {
-    let url =
-        url::Url::parse("ws://nostr-relay-1413080135.ap-northeast-1.elb.amazonaws.com").unwrap();
+    let url = url::Url::parse("ws://localhost:8080").unwrap();
+    // let url =
+    //     url::Url::parse("ws://nostr-relay-1413080135.ap-northeast-1.elb.amazonaws.com").unwrap();
 
     let seckey = Seckey::new([
         0x23, 0xaf, 0x29, 0xe0, 0xf8, 0xed, 0xbd, 0x6b, 0xcd, 0x49, 0x8d, 0x00, 0xcb, 0xea, 0x1c,
@@ -29,7 +32,9 @@ async fn main() {
 
     let message: Message = event.into();
     write.send(message).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
     write.send(Message::Close(None)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
     write.close().await.unwrap();
 }
 // nsec1ywhjnc8cak7khn2f35qvh6suvjlx62sguqjn07aesmt6jl8jgu8q0mm3jv

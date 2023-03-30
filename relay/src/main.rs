@@ -1,7 +1,6 @@
-use std::{collections::HashMap, convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, time::Duration};
 
-use futures_channel::mpsc::{unbounded, UnboundedSender};
-use futures_util::{FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures_util::{FutureExt, StreamExt};
 use hyper::{
     header::{
         ACCEPT, ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT,
@@ -16,7 +15,6 @@ use hyper::{
 use nostr_core::{RelayInformation, Request};
 use signal_hook::consts::SIGINT;
 use signal_hook_tokio::Signals;
-use tokio::sync::Mutex;
 use tokio_tungstenite::{
     tungstenite::{handshake::derive_accept_key, protocol::Role, Message},
     WebSocketStream,
@@ -30,15 +28,12 @@ mod connections;
 pub use connections::Connections;
 
 mod context;
-pub use context::{Connections, Context};
+pub use context::Context;
 
 #[cfg(debug_assertions)]
 const BIND_HOST: &str = "127.0.0.1:8080";
 #[cfg(not(debug_assertions))]
 const BIND_HOST: &str = "0.0.0.0:80";
-
-type Tx = UnboundedSender<Message>;
-type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,20 +46,22 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = BIND_HOST.parse().unwrap();
 
-    let state = PeerMap::new(Mutex::new(HashMap::new()));
+    let ctx = Context::new();
 
     let signals = Signals::new([SIGINT])?;
     let signals_handle = signals.handle();
-    let signal_task = tokio::spawn(handle_signals(state.clone(), signals)).map(|r| {
-        if let Err(e) = r {
-            tracing::error!("{e:?}");
+    let signal_task = tokio::spawn(handle_signals(signals)).map(|r| {
+        if let Err(error) = r {
+            tracing::error!(?error);
         }
     });
 
+    let ctx_for_service = ctx.clone();
     let make_svc = make_service_fn(move |conn: &AddrStream| {
         let remote_addr = conn.remote_addr();
-        let state = state.clone();
-        let service = service_fn(move |req| handle_request(state.clone(), req, remote_addr));
+        let ctx_for_service = ctx_for_service.clone();
+        let service =
+            service_fn(move |req| handle_request(ctx_for_service.clone(), req, remote_addr));
         async { Ok::<_, Infallible>(service) }
     });
 
@@ -72,13 +69,15 @@ async fn main() -> anyhow::Result<()> {
     let server = server.with_graceful_shutdown(signal_task);
 
     server.await?;
+    ctx.connections.close_all().await;
     signals_handle.close();
+    tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
 }
 
-#[tracing::instrument(skip(peer_map))]
+#[tracing::instrument(skip(ctx))]
 async fn handle_request(
-    peer_map: PeerMap,
+    ctx: Context,
     mut req: hyper::Request<hyper::Body>,
     addr: SocketAddr,
 ) -> Result<hyper::Response<hyper::Body>, Infallible> {
@@ -138,7 +137,7 @@ async fn handle_request(
                 match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
                         let _ = handle_connection(
-                            peer_map,
+                            ctx.clone(),
                             WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
                             addr,
                         )
@@ -171,31 +170,13 @@ async fn handle_request(
     }
 }
 
-#[tracing::instrument(skip(peer_map, ws_stream))]
+#[tracing::instrument(skip(ctx, ws_stream))]
 async fn handle_connection(
-    peer_map: PeerMap,
+    ctx: Context,
     ws_stream: WebSocketStream<Upgraded>,
     addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    tracing::info!("WebSocket connection established: {}", addr);
-
-    let (tx, _rx) = unbounded();
-    peer_map.lock().await.insert(addr, tx);
-
-    let (mut outgoing, incoming) = ws_stream.split();
-
-    let incoming = incoming.try_for_each(|msg| async {
-        if let Err(err) = handle_message(msg).await {
-            tracing::error!(error = ?err, "Error handling message");
-        }
-        Ok(())
-    });
-
-    outgoing.send(Message::Ping(vec![])).await.ok();
-
-    incoming.await?;
-
-    tracing::info!("disconnected");
+    Connection::new(ctx, ws_stream, addr, |_ctx, _req| Ok(())).await;
     Ok(())
 }
 
@@ -216,18 +197,12 @@ async fn handle_message(msg: Message) -> anyhow::Result<()> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn handle_signals(peer_map: PeerMap, mut signals: Signals) {
+async fn handle_signals(mut signals: Signals) {
     while let Some(signal) = signals.next().await {
         tracing::info!("received signal: {}", signal);
         match signal {
             SIGINT => {
                 tracing::info!("shutting down...");
-                let mut peers = peer_map.lock().await;
-                for peer in peers.values() {
-                    let _ = peer.unbounded_send(Message::Close(None));
-                    peer.close_channel();
-                }
-                peers.clear();
                 break;
             }
             _ => unreachable!(),

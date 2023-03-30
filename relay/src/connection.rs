@@ -1,16 +1,13 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
-use futures_util::{pin_mut, StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use hyper::upgrade::Upgraded;
 use nostr_core::Request;
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedSender},
-    Mutex,
-};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
-use crate::{Connections, Context};
+use crate::Context;
 
 pub type Tx = UnboundedSender<Message>;
 
@@ -35,6 +32,8 @@ impl Connection {
         addr: SocketAddr,
         mut handle_request: impl FnMut(Context, Request) -> anyhow::Result<()> + Send + 'static,
     ) {
+        tracing::info!("WebSocket connection established: {}", addr);
+
         let (tx, rx) = unbounded_channel();
         let (outgoing, mut incoming) = ws_stream.split();
         let connection = Self {
@@ -46,13 +45,11 @@ impl Connection {
 
         let connections_ref = ctx.connections.clone();
         tokio::spawn(async move {
-            let res = UnboundedReceiverStream::new(rx)
+            UnboundedReceiverStream::new(rx)
                 .map(Ok)
                 .forward(outgoing)
-                .await;
-            if let Err(e) = res {
-                tracing::error!(?e, "Error forwarding messages");
-            }
+                .await
+                .ok();
 
             let connection_ref = connections_ref.get_connection_mut(addr).await;
             if let Some(mut c) = connection_ref {
@@ -64,6 +61,9 @@ impl Connection {
         let connections_ref = ctx.connections.clone();
         tokio::spawn(async move {
             while let Some(msg) = incoming.next().await {
+                if let Ok(ref msg) = msg {
+                    tracing::info!(message = ?msg, "received");
+                }
                 match msg {
                     Ok(Message::Text(text)) => {
                         let req = match serde_json::from_str::<Request>(&text) {
@@ -85,7 +85,7 @@ impl Connection {
                             if c.status == Status::CloseRequesting {
                                 tracing::info!("receive reply close handshake");
                             } else {
-                                c.tx.send(Message::Close(None)).ok();
+                                c.send_raw(Message::Close(None));
                             }
                             c.status = Status::Closed;
                             c.remove();
@@ -107,6 +107,7 @@ impl Connection {
                 c.status = Status::Closed;
                 c.remove();
             }
+            tracing::info!("disconnected");
         });
     }
 
@@ -115,7 +116,12 @@ impl Connection {
     }
 
     pub fn close(&mut self) {
-        self.tx.send(Message::Close(None)).ok();
+        self.send_raw(Message::Close(None));
         self.status = Status::CloseRequesting;
+    }
+
+    fn send_raw(&self, message: Message) {
+        tracing::info!(?message, "send");
+        self.tx.send(message).ok();
     }
 }
