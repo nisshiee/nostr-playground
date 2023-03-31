@@ -16,6 +16,16 @@ pub enum Request {
     Close(SubscriptionId),
 }
 
+impl Request {
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            Request::Req { .. } => "REQ",
+            Request::Event(_) => "EVENT",
+            Request::Close(_) => "CLOSE",
+        }
+    }
+}
+
 impl Serialize for Request {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -27,11 +37,7 @@ impl Serialize for Request {
         };
         let mut seq = serializer.serialize_seq(Some(len))?;
 
-        let r#type = match self {
-            Request::Req { .. } => "REQ",
-            Request::Event(_) => "EVENT",
-            Request::Close(_) => "CLOSE",
-        };
+        let r#type = self.type_str();
         seq.serialize_element(r#type)?;
 
         match self {

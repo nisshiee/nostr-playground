@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = BIND_HOST.parse().unwrap();
 
-    let ctx = Context::new();
+    let ctx = Context::new().await;
 
     let signals = Signals::new([SIGINT])?;
     let signals_handle = signals.handle();
@@ -75,12 +75,13 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(skip(ctx))]
+#[tracing::instrument(skip(ctx, req), fields(method = %req.method(), path = %req.uri().path()))]
 async fn handle_request(
     ctx: Context,
     mut req: hyper::Request<hyper::Body>,
     addr: SocketAddr,
 ) -> Result<hyper::Response<hyper::Body>, Infallible> {
+    tracing::info!("{req:?}");
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/") => {
             let headers = req.headers();
@@ -91,6 +92,7 @@ async fn handle_request(
                 .map(|v| v.to_lowercase().contains("application/nostr+json"))
                 .unwrap_or(false)
             {
+                tracing::info!("returning relay information document: NIP-11");
                 let mut info = RelayInformation::default();
                 info.name = Some("Dev Relay".to_owned());
                 info.description = Some("WARNING! This relay is under development.".to_owned());
@@ -130,8 +132,11 @@ async fn handle_request(
                     .unwrap_or(false)
                 || key.is_none()
             {
+                tracing::info!("returning web page");
                 return Ok(hyper::Response::new(hyper::Body::from("Hello World!")));
             }
+
+            tracing::info!("upgrade to websocket connection");
             let ver = req.version();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(&mut req).await {

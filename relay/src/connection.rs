@@ -27,8 +27,6 @@ pub struct Connection {
 
 impl Connection {
     pub async fn new(ctx: Context, ws_stream: WebSocketStream<Upgraded>, addr: SocketAddr) {
-        tracing::info!("WebSocket connection established: {}", addr);
-
         let (tx, rx) = unbounded_channel();
         let (outgoing, incoming) = ws_stream.split();
         let connection = Self {
@@ -60,6 +58,9 @@ impl Connection {
         S: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Send + 'static,
     {
         tokio::spawn(async move {
+            let span = tracing::info_span!("incoming", ?addr);
+            let _enter = span.enter();
+
             pin_mut!(incoming);
             while let Some(msg) = incoming.next().await {
                 if let Ok(ref msg) = msg {
@@ -74,7 +75,7 @@ impl Connection {
                                 continue;
                             }
                         };
-                        tracing::info!(request = ?req, "request");
+                        Self::handle_request(ctx.clone(), addr, req).await;
                     }
                     Ok(Message::Close(_)) => {
                         tracing::info!("closing connection");
@@ -121,6 +122,18 @@ impl Connection {
     pub fn close(&mut self) {
         self.send_raw(Message::Close(None));
         self.status = Status::CloseRequesting;
+    }
+
+    #[tracing::instrument(skip_all, fields(r#type = req.type_str()))]
+    async fn handle_request(ctx: Context, addr: SocketAddr, req: Request) {
+        tracing::info!("{req:?}");
+
+        if let Request::Event(event) = req {
+            ctx.dynamodb
+                .put_item()
+                .table_name("events")
+                .item("id", event.id)
+        }
     }
 
     fn send_raw(&self, message: Message) {

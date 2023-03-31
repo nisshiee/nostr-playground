@@ -22,3 +22,5 @@ tracing = { workspace = true }
 tracing-futures = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
+aws-config = "0.54"
+aws-sdk-dynamodb = "0.24"
