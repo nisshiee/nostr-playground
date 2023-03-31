@@ -37,7 +37,7 @@ impl Connection {
         ctx.connections.insert(connection).await;
 
         Self::spawn_outgoing_stream(rx, outgoing);
-        Self::spawn_incoming_stream(ctx, addr, incoming);
+        tokio::spawn(Self::handle_incoming_stream(ctx, addr, incoming));
     }
 
     fn spawn_outgoing_stream<S>(rx: UnboundedReceiver<Message>, outgoing: S)
@@ -53,66 +53,64 @@ impl Connection {
         });
     }
 
-    fn spawn_incoming_stream<S>(ctx: Context, addr: SocketAddr, incoming: S)
+    #[tracing::instrument(name = "incoming", skip(ctx, incoming))]
+    async fn handle_incoming_stream<S>(ctx: Context, addr: SocketAddr, incoming: S)
     where
         S: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Send + 'static,
     {
-        tokio::spawn(async move {
-            let span = tracing::info_span!("incoming", ?addr);
-            let _enter = span.enter();
-
-            pin_mut!(incoming);
-            while let Some(msg) = incoming.next().await {
-                if let Ok(ref msg) = msg {
-                    tracing::info!(message = ?msg, "received");
-                }
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        let req = match serde_json::from_str::<Request>(&text) {
-                            Ok(req) => req,
-                            Err(error) => {
-                                tracing::error!(?text, ?error, "Error parsing request");
-                                continue;
-                            }
-                        };
-                        Self::handle_request(ctx.clone(), addr, req).await;
-                    }
-                    Ok(Message::Close(_)) => {
-                        tracing::info!("closing connection");
-                        let connection = ctx.connections.get_connection_mut(addr).await;
-                        if let Some(mut c) = connection {
-                            if c.status == Status::CloseRequesting {
-                                tracing::info!("receive reply close handshake");
-                            } else {
-                                c.send_raw(Message::Close(None));
-                            }
-                            c.status = Status::Closed;
-                            c.remove();
+        pin_mut!(incoming);
+        while let Some(msg) = incoming.next().await {
+            if let Ok(ref msg) = msg {
+                tracing::info!(message = ?msg, "received");
+            }
+            match msg {
+                Ok(Message::Text(text)) => {
+                    let req = match serde_json::from_str::<Request>(&text) {
+                        Ok(req) => req,
+                        Err(error) => {
+                            tracing::error!(?text, ?error, "Error parsing request");
+                            continue;
                         }
-                        break;
-                    }
-                    Ok(Message::Ping(_)) => {
-                        if let Some(c) = ctx.connections.get_connection_mut(addr).await {
-                            c.send_raw(Message::Pong(vec![]));
-                        }
-                    }
-                    // TODO: PING, PONG, CLOSEを良い感じに
-                    Ok(_) => {
-                        tracing::debug!("ignore non-text message");
-                    }
-                    Err(e) => {
-                        tracing::error!(?e, "Error receiving message");
-                        break;
+                    };
+                    if let Err(error) = Self::handle_request(ctx.clone(), addr, req).await {
+                        tracing::error!(?error, "handle request error");
                     }
                 }
+                Ok(Message::Close(_)) => {
+                    tracing::info!("closing connection");
+                    let connection = ctx.connections.get_connection_mut(addr).await;
+                    if let Some(mut c) = connection {
+                        if c.status == Status::CloseRequesting {
+                            tracing::info!("receive reply close handshake");
+                        } else {
+                            c.send_raw(Message::Close(None));
+                        }
+                        c.status = Status::Closed;
+                        c.remove();
+                    }
+                    break;
+                }
+                Ok(Message::Ping(_)) => {
+                    if let Some(c) = ctx.connections.get_connection_mut(addr).await {
+                        c.send_raw(Message::Pong(vec![]));
+                    }
+                }
+                // TODO: PING, PONG, CLOSEを良い感じに
+                Ok(_) => {
+                    tracing::debug!("ignore non-text message");
+                }
+                Err(e) => {
+                    tracing::error!(?e, "Error receiving message");
+                    break;
+                }
             }
+        }
 
-            if let Some(mut c) = ctx.connections.get_connection_mut(addr).await {
-                c.status = Status::Closed;
-                c.remove();
-            }
-            tracing::info!("disconnected");
-        });
+        if let Some(mut c) = ctx.connections.get_connection_mut(addr).await {
+            c.status = Status::Closed;
+            c.remove();
+        }
+        tracing::info!("disconnected");
     }
 
     pub fn addr(&self) -> SocketAddr {
@@ -125,15 +123,24 @@ impl Connection {
     }
 
     #[tracing::instrument(skip_all, fields(r#type = req.type_str()))]
-    async fn handle_request(ctx: Context, addr: SocketAddr, req: Request) {
+    async fn handle_request(ctx: Context, _addr: SocketAddr, req: Request) -> anyhow::Result<()> {
         tracing::info!("{req:?}");
 
         if let Request::Event(event) = req {
+            if !event.verify() {
+                tracing::info!("verify failed");
+                return Ok(());
+            }
+            let item = serde_dynamo::to_item(event)?;
             ctx.dynamodb
                 .put_item()
                 .table_name("events")
-                .item("id", event.id)
+                .set_item(Some(item))
+                .send()
+                .await?;
         }
+
+        Ok(())
     }
 
     fn send_raw(&self, message: Message) {

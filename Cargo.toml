@@ -1,8 +1,10 @@
 [workspace]
-members = ["core", "client", "relay", "sandbox"]
+members = ["core", "client", "relay", "sandbox", "dev-tools"]
 
 [workspace.dependencies]
 anyhow = "1"
+aws-config = "0.54"
+aws-sdk-dynamodb = "0.24"
 chrono = { version = "0.4", features = ["serde"] }
 ecdsa = { version = "0.15", features = ["signing", "verifying"] }
 futures-channel = "0.3"
