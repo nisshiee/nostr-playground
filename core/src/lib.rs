@@ -6,6 +6,12 @@ pub use pubkey::Pubkey;
 mod seckey;
 pub use seckey::Seckey;
 
+mod event_id;
+pub use event_id::EventId;
+
+mod event_signature;
+pub use event_signature::EventSignature;
+
 mod canonical_event;
 use canonical_event::CanonicalEvent;
 
@@ -20,6 +26,9 @@ pub use request::Request;
 
 mod subscription_id;
 pub use subscription_id::SubscriptionId;
+
+mod hex_prefix;
+pub use hex_prefix::HexPrefix;
 
 mod filter;
 pub use filter::Filter;

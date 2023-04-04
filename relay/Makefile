@@ -5,7 +5,7 @@ DOCKER ?= docker
 AWS ?= aws
 
 ECS_CLUSTER_NAME ?= nostr-relay
-ECS_SERVICE_NAME ?= nostr-relay
+ECS_SERVICE_NAME ?= nostr-relay2
 
 .PHONY: run
 run: ## run

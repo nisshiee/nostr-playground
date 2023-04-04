@@ -1,6 +1,10 @@
+use std::fmt::Debug;
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+use crate::serde::bytes::to_string;
+
+#[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Pubkey(#[serde(with = "crate::serde::bytes")] [u8; 32]);
 
@@ -11,6 +15,12 @@ impl Pubkey {
 
     pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl Debug for Pubkey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Pubkey").field(&to_string(&self.0)).finish()
     }
 }
 
