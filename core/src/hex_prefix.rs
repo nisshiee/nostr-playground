@@ -11,6 +11,21 @@ pub struct HexPrefix {
     len: usize,
 }
 
+impl HexPrefix {
+    pub fn is_fit(&self, bytes: &[u8]) -> bool {
+        if self.len > bytes.len() * 2 {
+            return false;
+        }
+        if self.body[0..self.len / 2] != bytes[0..self.len / 2] {
+            return false;
+        }
+        if self.len % 2 == 0 {
+            return true;
+        }
+        self.body[self.len / 2] >> 4 == bytes[self.len / 2] >> 4
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HexPrefixParseError {
     #[error("invalid length")]

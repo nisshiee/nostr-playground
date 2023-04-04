@@ -1,4 +1,4 @@
-mod serde;
+mod util;
 
 mod pubkey;
 pub use pubkey::Pubkey;

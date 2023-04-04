@@ -1,13 +1,19 @@
-use std::fmt::Debug;
+use std::{
+    fmt::{Debug, Display},
+    str::FromStr,
+};
 
 use k256::schnorr::SigningKey;
 use serde::{Deserialize, Serialize};
 
-use crate::{serde::bytes::to_string, Pubkey};
+use crate::{
+    util::{bytes_to_string, string_to_bytes, BytesParseError, BytesVisitor},
+    Pubkey,
+};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Seckey(#[serde(with = "crate::serde::bytes")] [u8; 32]);
+#[derive(Clone, Copy, PartialEq, Eq)]
+
+pub struct Seckey([u8; 32]);
 
 impl Seckey {
     pub fn new(pubkey: [u8; 32]) -> Self {
@@ -25,8 +31,40 @@ impl Seckey {
     }
 }
 
+impl Display for Seckey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", bytes_to_string(&self.0))
+    }
+}
+
 impl Debug for Seckey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Seckey").field(&to_string(&self.0)).finish()
+        f.debug_tuple("Seckey").field(&self.to_string()).finish()
+    }
+}
+
+impl Serialize for Seckey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl FromStr for Seckey {
+    type Err = BytesParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        string_to_bytes(s).map(Self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Seckey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(BytesVisitor::<32>).map(Self)
     }
 }

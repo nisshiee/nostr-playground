@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use futures_util::{pin_mut, Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
-use nostr_core::Request;
+use nostr_core::{Filter, Request, SubscriptionId};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -23,6 +23,7 @@ pub struct Connection {
     addr: SocketAddr,
     tx: Tx,
     status: Status,
+    subscriptions: HashMap<SubscriptionId, Vec<Filter>>,
 }
 
 impl Connection {
@@ -33,6 +34,7 @@ impl Connection {
             addr,
             tx,
             status: Status::Connected,
+            subscriptions: HashMap::new(),
         };
         ctx.connections.insert(connection).await;
 
@@ -123,21 +125,44 @@ impl Connection {
     }
 
     #[tracing::instrument(skip_all, fields(r#type = req.type_str()))]
-    async fn handle_request(ctx: Context, _addr: SocketAddr, req: Request) -> anyhow::Result<()> {
+    async fn handle_request(ctx: Context, addr: SocketAddr, req: Request) -> anyhow::Result<()> {
         tracing::info!("{req:?}");
 
-        if let Request::Event(event) = req {
-            if !event.verify() {
-                tracing::info!("verify failed");
-                return Ok(());
+        match req {
+            Request::Event(event) => {
+                if !event.verify() {
+                    tracing::info!("verify failed");
+                    return Ok(());
+                }
+                let item = serde_dynamo::to_item(event)?;
+                ctx.dynamodb
+                    .put_item()
+                    .table_name("events")
+                    .set_item(Some(item))
+                    .send()
+                    .await?;
             }
-            let item = serde_dynamo::to_item(event)?;
-            ctx.dynamodb
-                .put_item()
-                .table_name("events")
-                .set_item(Some(item))
-                .send()
-                .await?;
+            Request::Req {
+                subscription_id,
+                filters,
+            } => {
+                let Some(mut connection) = ctx.connections.get_connection_mut(addr).await else {
+                    tracing::warn!("connection not found");
+                    return Ok(());
+                };
+
+                connection.subscriptions.insert(subscription_id, filters);
+                tracing::info!("{:?}", connection.subscriptions);
+            }
+            Request::Close(subscription_id) => {
+                let Some(mut connection) = ctx.connections.get_connection_mut(addr).await else {
+                    tracing::warn!("connection not found");
+                    return Ok(());
+                };
+
+                connection.subscriptions.remove(&subscription_id);
+                tracing::info!("{:?}", connection.subscriptions);
+            }
         }
 
         Ok(())
