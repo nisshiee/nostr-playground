@@ -33,6 +33,9 @@ pub use hex_prefix::HexPrefix;
 mod filter;
 pub use filter::Filter;
 
+mod filters;
+pub use filters::Filters;
+
 mod response;
 pub use response::Response;
 

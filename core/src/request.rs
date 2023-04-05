@@ -4,14 +4,14 @@ use serde::{
     Deserialize, Serialize, Serializer,
 };
 
-use crate::{Filter, RawEvent, SubscriptionId};
+use crate::{Filter, Filters, RawEvent, SubscriptionId};
 
 #[derive(Debug, Clone)]
 pub enum Request {
     Event(RawEvent),
     Req {
         subscription_id: SubscriptionId,
-        filters: Vec<Filter>,
+        filters: Filters,
     },
     Close(SubscriptionId),
 }
@@ -49,7 +49,7 @@ impl Serialize for Request {
                 filters,
             } => {
                 seq.serialize_element(subscription_id)?;
-                for filter in filters {
+                for filter in filters.iter() {
                     seq.serialize_element(filter)?;
                 }
             }
@@ -88,7 +88,7 @@ impl<'de> Deserialize<'de> for Request {
                         let Some(subscription_id) = seq.next_element::<SubscriptionId>()? else {
                             return Err(de::Error::invalid_length(1, &self));
                         };
-                        let mut filters = Vec::new();
+                        let mut filters = Filters::new();
                         while let Some(filter) = seq.next_element::<Filter>()? {
                             filters.push(filter);
                         }

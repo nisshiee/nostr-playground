@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::SocketAddr};
 
 use futures_util::{pin_mut, Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
-use nostr_core::{Filter, Request, SubscriptionId};
+use nostr_core::{Filters, Request, SubscriptionId};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -23,7 +23,7 @@ pub struct Connection {
     addr: SocketAddr,
     tx: Tx,
     status: Status,
-    subscriptions: HashMap<SubscriptionId, Vec<Filter>>,
+    subscriptions: HashMap<SubscriptionId, Filters>,
 }
 
 impl Connection {
