@@ -30,6 +30,9 @@ pub use connections::Connections;
 mod context;
 pub use context::Context;
 
+mod query;
+pub use query::Query;
+
 #[cfg(debug_assertions)]
 const BIND_HOST: &str = "127.0.0.1:8080";
 #[cfg(not(debug_assertions))]

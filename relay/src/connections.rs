@@ -7,7 +7,6 @@ use std::{
 
 use tokio::sync::{Mutex, MutexGuard};
 
-
 use crate::Connection;
 
 #[derive(Clone)]
@@ -37,7 +36,7 @@ impl Connections {
     pub async fn close_all(&self) {
         let mut inner = self.inner.lock().await;
         for (_, connection) in inner.iter_mut() {
-            connection.close();
+            connection.close().await;
         }
     }
 }

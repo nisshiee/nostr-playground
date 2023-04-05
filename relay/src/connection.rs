@@ -1,29 +1,47 @@
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use futures_util::{pin_mut, Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
-use nostr_core::{Filters, Request, SubscriptionId};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use nostr_core::{Filters, Request, Response, SubscriptionId};
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Mutex,
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
-use crate::Context;
+use crate::{Context, Query};
 
 pub type Tx = UnboundedSender<Message>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum Status {
-    Connected,
+    Connected {
+        subscriptions: HashMap<SubscriptionId, Filters>,
+    },
     CloseRequesting,
     Closed,
+}
+
+impl Status {
+    pub fn is_close_requesting(&self) -> bool {
+        matches!(self, Self::CloseRequesting)
+    }
+}
+
+impl Default for Status {
+    fn default() -> Self {
+        Self::Connected {
+            subscriptions: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Connection {
     addr: SocketAddr,
     tx: Tx,
-    status: Status,
-    subscriptions: HashMap<SubscriptionId, Filters>,
+    status: Arc<Mutex<Status>>,
 }
 
 impl Connection {
@@ -33,13 +51,12 @@ impl Connection {
         let connection = Self {
             addr,
             tx,
-            status: Status::Connected,
-            subscriptions: HashMap::new(),
+            status: Arc::new(Mutex::new(Status::default())),
         };
-        ctx.connections.insert(connection).await;
+        ctx.connections.insert(connection.clone()).await;
 
         Self::spawn_outgoing_stream(rx, outgoing);
-        tokio::spawn(Self::handle_incoming_stream(ctx, addr, incoming));
+        tokio::spawn(Self::handle_incoming_stream(ctx, connection, incoming));
     }
 
     fn spawn_outgoing_stream<S>(rx: UnboundedReceiver<Message>, outgoing: S)
@@ -55,11 +72,13 @@ impl Connection {
         });
     }
 
-    #[tracing::instrument(name = "incoming", skip(ctx, incoming))]
-    async fn handle_incoming_stream<S>(ctx: Context, addr: SocketAddr, incoming: S)
+    #[tracing::instrument(name = "incoming", skip_all, fields(addr = conn.addr().to_string()))]
+    async fn handle_incoming_stream<S>(ctx: Context, conn: Connection, incoming: S)
     where
         S: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Send + 'static,
     {
+        let addr = conn.addr();
+
         pin_mut!(incoming);
         while let Some(msg) = incoming.next().await {
             if let Ok(ref msg) = msg {
@@ -74,30 +93,25 @@ impl Connection {
                             continue;
                         }
                     };
-                    if let Err(error) = Self::handle_request(ctx.clone(), addr, req).await {
+                    if let Err(error) = Self::handle_request(ctx.clone(), conn.clone(), req).await {
                         tracing::error!(?error, "handle request error");
                     }
                 }
                 Ok(Message::Close(_)) => {
                     tracing::info!("closing connection");
                     let connection = ctx.connections.get_connection_mut(addr).await;
-                    if let Some(mut c) = connection {
-                        if c.status == Status::CloseRequesting {
-                            tracing::info!("receive reply close handshake");
-                        } else {
-                            c.send_raw(Message::Close(None));
-                        }
-                        c.status = Status::Closed;
-                        c.remove();
+                    let mut status = conn.status.lock().await;
+
+                    if status.is_close_requesting() {
+                        tracing::info!("receive reply close handshake");
+                    } else {
+                        conn.send_raw(Message::Close(None));
                     }
+                    *status = Status::Closed;
+
+                    if let Some(c) = connection { c.remove() }
                     break;
                 }
-                Ok(Message::Ping(_)) => {
-                    if let Some(c) = ctx.connections.get_connection_mut(addr).await {
-                        c.send_raw(Message::Pong(vec![]));
-                    }
-                }
-                // TODO: PING, PONG, CLOSEを良い感じに
                 Ok(_) => {
                     tracing::debug!("ignore non-text message");
                 }
@@ -108,10 +122,11 @@ impl Connection {
             }
         }
 
-        if let Some(mut c) = ctx.connections.get_connection_mut(addr).await {
-            c.status = Status::Closed;
-            c.remove();
-        }
+        let connection = ctx.connections.get_connection_mut(addr).await;
+        let mut status = conn.status.lock().await;
+        *status = Status::Closed;
+        if let Some(c) = connection { c.remove() }
+
         tracing::info!("disconnected");
     }
 
@@ -119,13 +134,14 @@ impl Connection {
         self.addr
     }
 
-    pub fn close(&mut self) {
+    pub async fn close(&mut self) {
+        let mut status = self.status.lock().await;
         self.send_raw(Message::Close(None));
-        self.status = Status::CloseRequesting;
+        *status = Status::CloseRequesting;
     }
 
     #[tracing::instrument(skip_all, fields(r#type = req.type_str()))]
-    async fn handle_request(ctx: Context, addr: SocketAddr, req: Request) -> anyhow::Result<()> {
+    async fn handle_request(ctx: Context, conn: Connection, req: Request) -> anyhow::Result<()> {
         tracing::info!("{req:?}");
 
         match req {
@@ -146,22 +162,27 @@ impl Connection {
                 subscription_id,
                 filters,
             } => {
-                let Some(mut connection) = ctx.connections.get_connection_mut(addr).await else {
-                    tracing::warn!("connection not found");
-                    return Ok(());
-                };
-
-                connection.subscriptions.insert(subscription_id, filters);
-                tracing::info!("{:?}", connection.subscriptions);
+                let query = Query::new(filters.min_since(), filters.max_until());
+                let events = query.exec(ctx).await?;
+                let events = events.into_iter().filter(|e| filters.is_fit(e));
+                for event in events {
+                    let response = Response::Event {
+                        subscription_id: subscription_id.clone(),
+                        event,
+                    };
+                    let message = Message::Text(serde_json::to_string(&response)?);
+                    conn.send_raw(message);
+                }
+                if let Status::Connected { subscriptions } = &mut *conn.status.lock().await {
+                    subscriptions.insert(subscription_id, filters);
+                    tracing::info!("{:?}", subscriptions);
+                }
             }
             Request::Close(subscription_id) => {
-                let Some(mut connection) = ctx.connections.get_connection_mut(addr).await else {
-                    tracing::warn!("connection not found");
-                    return Ok(());
-                };
-
-                connection.subscriptions.remove(&subscription_id);
-                tracing::info!("{:?}", connection.subscriptions);
+                if let Status::Connected { subscriptions } = &mut *conn.status.lock().await {
+                    subscriptions.remove(&subscription_id);
+                    tracing::info!("{:?}", subscriptions);
+                }
             }
         }
 

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use futures_util::{pin_mut, SinkExt, StreamExt};
 use nostr_core::{RawEvent, Seckey};
+use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 // https://github.com/snapview/tokio-tungstenite/blob/master/examples/client.rs
@@ -24,13 +25,32 @@ async fn main() {
     ];
     let event = serde_json::to_string(&event).unwrap();
 
+    let req = json!([
+            "REQ",
+            "sub_id_test",
+            {
+            "kinds": [1]
+        }
+    ]);
+    let req = serde_json::to_string(&req).unwrap();
+
     let (ws_stream, _) = connect_async(url).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
 
-    let (write, _) = ws_stream.split();
+    let (write, read) = ws_stream.split();
+
+    tokio::task::spawn(async move {
+        pin_mut!(read);
+        while let Some(msg) = read.next().await {
+            println!("Received a message: {:?}", msg);
+        }
+    });
+
     pin_mut!(write);
 
     let message: Message = event.into();
+    write.send(message).await.unwrap();
+    let message: Message = req.into();
     write.send(message).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     write.send(Message::Ping(vec![])).await.unwrap();
