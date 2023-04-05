@@ -1,14 +1,16 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use futures_util::{pin_mut, Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
-use nostr_core::{Filters, Request, Response, SubscriptionId};
+use nostr_core::{Request, Response, SubscriptionId};
 use tokio::sync::{
+    broadcast::error::RecvError,
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Mutex,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
+use ulid::Ulid;
 
 use crate::{Context, Query};
 
@@ -17,7 +19,7 @@ pub type Tx = UnboundedSender<Message>;
 #[derive(Clone)]
 pub enum Status {
     Connected {
-        subscriptions: HashMap<SubscriptionId, Filters>,
+        subscriptions: HashMap<SubscriptionId, Ulid>,
     },
     CloseRequesting,
     Closed,
@@ -109,7 +111,9 @@ impl Connection {
                     }
                     *status = Status::Closed;
 
-                    if let Some(c) = connection { c.remove() }
+                    if let Some(c) = connection {
+                        c.remove()
+                    }
                     break;
                 }
                 Ok(_) => {
@@ -125,7 +129,9 @@ impl Connection {
         let connection = ctx.connections.get_connection_mut(addr).await;
         let mut status = conn.status.lock().await;
         *status = Status::Closed;
-        if let Some(c) = connection { c.remove() }
+        if let Some(c) = connection {
+            c.remove()
+        }
 
         tracing::info!("disconnected");
     }
@@ -150,6 +156,9 @@ impl Connection {
                     tracing::info!("verify failed");
                     return Ok(());
                 }
+                if let Err(error) = ctx.event_broadcast.send(event.clone()) {
+                    tracing::error!(?error, "event broadcast error");
+                }
                 let item = serde_dynamo::to_item(event)?;
                 ctx.dynamodb
                     .put_item()
@@ -163,7 +172,7 @@ impl Connection {
                 filters,
             } => {
                 let query = Query::new(filters.min_since(), filters.max_until());
-                let events = query.exec(ctx).await?;
+                let events = query.exec(&ctx).await?;
                 let events = events.into_iter().filter(|e| filters.is_fit(e));
                 for event in events {
                     let response = Response::Event {
@@ -174,8 +183,49 @@ impl Connection {
                     conn.send_raw(message);
                 }
                 if let Status::Connected { subscriptions } = &mut *conn.status.lock().await {
-                    subscriptions.insert(subscription_id, filters);
+                    let ulid = Ulid::new();
+                    subscriptions.insert(subscription_id.clone(), ulid);
                     tracing::info!("{:?}", subscriptions);
+
+                    let conn = conn.clone();
+                    let mut rx = ctx.event_broadcast.subscribe();
+                    tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                                    let Status::Connected { subscriptions } = &*conn.status.lock().await else { break; };
+                                    let Some(existing_ulid) = subscriptions.get(&subscription_id) else { break; };
+                                    if existing_ulid != &ulid {
+                                        break;
+                                    }
+                                }
+                                event = rx.recv() => match event {
+                                    Ok(event) => {
+                                        if filters.is_fit(&event) {
+                                            let response = Response::Event {
+                                                subscription_id: subscription_id.clone(),
+                                                event,
+                                            };
+                                            match serde_json::to_string(&response) {
+                                                Ok(response) => {
+                                                    let message = Message::Text(response);
+                                                    conn.send_raw(message);
+                                                }
+                                                Err(error) => {
+                                                    tracing::error!(?error, "Error serializing response");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(RecvError::Closed) => {
+                                        tracing::info!("event broadcast closed");
+                                        break;
+                                    }
+                                    _ => {},
+                                }
+                            }
+                        }
+                    });
                 }
             }
             Request::Close(subscription_id) => {

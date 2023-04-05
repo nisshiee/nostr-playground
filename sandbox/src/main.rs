@@ -48,9 +48,10 @@ async fn main() {
 
     pin_mut!(write);
 
-    let message: Message = event.into();
-    write.send(message).await.unwrap();
     let message: Message = req.into();
+    write.send(message).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let message: Message = event.into();
     write.send(message).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     write.send(Message::Ping(vec![])).await.unwrap();

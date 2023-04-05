@@ -27,3 +27,4 @@ tracing = { workspace = true }
 tracing-futures = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
+ulid = "1"

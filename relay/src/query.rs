@@ -16,7 +16,7 @@ impl Query {
         Self { since, until }
     }
 
-    pub async fn exec(&self, ctx: Context) -> anyhow::Result<Vec<RawEvent>> {
+    pub async fn exec(&self, ctx: &Context) -> anyhow::Result<Vec<RawEvent>> {
         let since = self.since.map(|t| t.timestamp()).unwrap_or(0);
         let until = self.until.map(|t| t.timestamp()).unwrap_or(i64::MAX);
         let output = ctx
