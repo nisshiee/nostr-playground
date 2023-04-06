@@ -5,6 +5,8 @@ use std::{
 
 use serde::{de::Visitor, Deserialize, Serialize};
 
+use crate::Pubkey;
+
 #[derive(Clone, Copy)]
 pub struct HexPrefix {
     body: [u8; 32],
@@ -121,6 +123,15 @@ impl<'de> Deserialize<'de> for HexPrefix {
 impl Debug for HexPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("HexPrefix").field(&self.to_string()).finish()
+    }
+}
+
+impl From<Pubkey> for HexPrefix {
+    fn from(pubkey: Pubkey) -> Self {
+        Self {
+            body: pubkey.into_inner(),
+            len: 32 * 2,
+        }
     }
 }
 

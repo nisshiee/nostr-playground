@@ -11,12 +11,16 @@ use crate::util::{bytes_to_string, string_to_bytes, BytesParseError, BytesVisito
 pub struct Pubkey([u8; 32]);
 
 impl Pubkey {
-    pub fn new(pubkey: [u8; 32]) -> Self {
+    pub const fn new(pubkey: [u8; 32]) -> Self {
         Self(pubkey)
     }
 
     pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn into_inner(self) -> [u8; 32] {
+        self.0
     }
 }
 

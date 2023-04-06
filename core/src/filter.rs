@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EventId, HexPrefix, Pubkey, RawEvent};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Filter {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub ids: Vec<HexPrefix>,

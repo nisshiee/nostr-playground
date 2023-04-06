@@ -1,5 +1,6 @@
 use std::{convert::Infallible, net::SocketAddr, time::Duration};
 
+use copy_from_relay::{copy_from_relay, Stop};
 use futures_util::{FutureExt, StreamExt};
 use hyper::{
     header::{
@@ -12,7 +13,7 @@ use hyper::{
     upgrade::Upgraded,
     Method, Server, StatusCode, Version,
 };
-use nostr_core::RelayInformation;
+use nostr_core::{Pubkey, RelayInformation};
 use signal_hook::consts::SIGINT;
 use signal_hook_tokio::Signals;
 use tokio_tungstenite::{
@@ -33,10 +34,17 @@ pub use context::Context;
 mod query;
 pub use query::Query;
 
+mod copy_from_relay;
+
 #[cfg(debug_assertions)]
 const BIND_HOST: &str = "127.0.0.1:8080";
 #[cfg(not(debug_assertions))]
 const BIND_HOST: &str = "0.0.0.0:80";
+
+const MY_PUBKEY: Pubkey = Pubkey::new([
+    0x73, 0x49, 0x15, 0x09, 0xb8, 0xe2, 0xd8, 0x08, 0x40, 0x87, 0x3b, 0x5a, 0x13, 0xba, 0x98, 0xa5,
+    0xd1, 0xac, 0x3a, 0x16, 0xc9, 0x29, 0x2e, 0x10, 0x6b, 0x1f, 0x2e, 0xda, 0x31, 0x15, 0x2c, 0x52,
+]);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -59,6 +67,8 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let copy_from_relay = copy_from_relay(ctx.clone());
+
     let ctx_for_service = ctx.clone();
     let make_svc = make_service_fn(move |conn: &AddrStream| {
         let remote_addr = conn.remote_addr();
@@ -74,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
     server.await?;
     ctx.connections.close_all().await;
     signals_handle.close();
+    copy_from_relay.send(Stop).ok();
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
 }
@@ -99,6 +110,8 @@ async fn handle_request(
                 let mut info = RelayInformation::default();
                 info.name = Some("Dev Relay".to_owned());
                 info.description = Some("WARNING! This relay is under development.".to_owned());
+                info.pubkey = Some(MY_PUBKEY);
+                info.supported_nips = Some(vec![1, 11]);
 
                 let mut res = hyper::Response::new(hyper::Body::empty());
                 *res.body_mut() = hyper::Body::from(serde_json::to_string(&info).unwrap());
