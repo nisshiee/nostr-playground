@@ -63,6 +63,9 @@ pub async fn handle_request(ctx: Context, conn: Connection, req: Request) -> any
                 let message = Message::Text(serde_json::to_string(&response)?);
                 conn.send_raw(message);
             }
+            let response = Response::Eose(subscription_id.clone());
+            let message = Message::Text(serde_json::to_string(&response)?);
+            conn.send_raw(message);
             if let Status::Connected { subscriptions } = &mut *conn.status.lock().await {
                 let ulid = Ulid::new();
                 subscriptions.insert(subscription_id.clone(), ulid);

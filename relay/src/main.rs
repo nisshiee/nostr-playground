@@ -111,7 +111,7 @@ async fn handle_request(
                 info.name = Some("Dev Relay".to_owned());
                 info.description = Some("WARNING! This relay is under development.".to_owned());
                 info.pubkey = Some(MY_PUBKEY);
-                info.supported_nips = Some(vec![1, 11]);
+                info.supported_nips = Some(vec![1, 11, 15]);
 
                 let mut res = hyper::Response::new(hyper::Body::empty());
                 *res.body_mut() = hyper::Body::from(serde_json::to_string(&info).unwrap());
