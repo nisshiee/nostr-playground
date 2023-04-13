@@ -19,9 +19,7 @@ pub async fn handle_request(ctx: Context, conn: Connection, req: Request) -> any
                 tracing::info!("verify failed");
                 return Ok(());
             }
-            if let Err(error) = ctx.event_broadcast.send(event.clone()) {
-                tracing::error!(?error, "event broadcast error");
-            }
+            ctx.event_broadcaster.send(event.clone());
             let kind = event.kind;
             let created_at = event.created_at;
 
@@ -72,7 +70,7 @@ pub async fn handle_request(ctx: Context, conn: Connection, req: Request) -> any
                 tracing::info!("{:?}", subscriptions);
 
                 let conn = conn.clone();
-                let rx = ctx.event_broadcast.subscribe();
+                let rx = ctx.event_broadcaster.subscribe();
                 tokio::spawn(new_subscription(conn, subscription_id, ulid, rx, filters));
             }
         }

@@ -5,20 +5,32 @@ use chrono::Utc;
 use futures_util::{Sink, SinkExt, Stream, StreamExt, TryFutureExt};
 use nostr_core::{Filter, Filters, HexPrefix, Pubkey, RawEvent, Request, Response, SubscriptionId};
 use serde_dynamo::to_attribute_value;
-use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 use tokio_tungstenite::{connect_async, tungstenite::Error as WsError, tungstenite::Message};
 use ulid::Ulid;
 
 use crate::{Context, MY_PUBKEY};
 
+#[derive(Clone)]
 pub struct Stop;
 
-const RELAY_URL: &str = "wss://nostr.wine";
-
 #[tracing::instrument(skip_all)]
-pub fn copy_from_relay(ctx: Context) -> oneshot::Sender<Stop> {
-    let (tx, rx) = oneshot::channel();
-    tokio::spawn(subscribe_relay(ctx, rx).map_err(|e| tracing::error!("{:?}", e)));
+pub fn copy_from_relay(ctx: Context) -> broadcast::Sender<Stop> {
+    let relay_urls = [
+        "wss://nostr.wine",
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+        "wss://relay.snort.social",
+        "wss://relay-jp.nostr.wirednet.jp",
+    ];
+
+    let (tx, _rx) = broadcast::channel(4);
+    for relay_url in relay_urls {
+        tokio::spawn(
+            subscribe_relay(ctx.clone(), tx.subscribe(), relay_url)
+                .map_err(|e| tracing::error!("{:?}", e)),
+        );
+    }
     tx
 }
 
@@ -53,9 +65,13 @@ async fn get_followings(ctx: &Context) -> anyhow::Result<Vec<Pubkey>> {
     Ok(contact_list)
 }
 
-#[tracing::instrument(skip_all)]
-async fn subscribe_relay(ctx: Context, mut stop: oneshot::Receiver<Stop>) -> anyhow::Result<()> {
-    let (mut write, mut read) = open_connection(&ctx).await?;
+#[tracing::instrument(skip(ctx, stop))]
+async fn subscribe_relay(
+    ctx: Context,
+    mut stop: broadcast::Receiver<Stop>,
+    url: &str,
+) -> anyhow::Result<()> {
+    let (mut write, mut read) = open_connection(&ctx, url).await?;
 
     loop {
         tokio::select! {
@@ -65,13 +81,13 @@ async fn subscribe_relay(ctx: Context, mut stop: oneshot::Receiver<Stop>) -> any
                     match message {
                         Message::Ping(_) => {
                             if let Err(_) = write.send(Message::Pong(vec![])).await {
-                                (write, read) = open_connection(&ctx).await?;
+                                (write, read) = open_connection(&ctx, url).await?;
                                 continue;
                             }
                         }
                         Message::Close(_) => {
                             write.send(Message::Close(None)).await.ok();
-                            (write, read) = open_connection(&ctx).await?;
+                            (write, read) = open_connection(&ctx, url).await?;
                             continue;
                         }
                         Message::Text(text) => {
@@ -89,7 +105,7 @@ async fn subscribe_relay(ctx: Context, mut stop: oneshot::Receiver<Stop>) -> any
                             };
                             if !event.verify() { continue; }
 
-                            ctx.event_broadcast.send(event.clone()).ok();
+                            ctx.event_broadcaster.send(event.clone());
 
                             let kind = event.kind;
                             let created_at = event.created_at;
@@ -122,17 +138,17 @@ async fn subscribe_relay(ctx: Context, mut stop: oneshot::Receiver<Stop>) -> any
                 }
                 Err(error) => {
                     tracing::error!(?error, "error");
-                    (write, read) = open_connection(&ctx).await?;
+                    (write, read) = open_connection(&ctx, url).await?;
                     continue;
                 }
             },
-            _ = &mut stop => {
+            _ = stop.recv() => {
                 tracing::info!("stop");
                 write.send(Message::Close(None)).await?;
                 break;
             }
             else => {
-                (write, read) = open_connection(&ctx).await?;
+                (write, read) = open_connection(&ctx, url).await?;
                 continue;
             }
         }
@@ -143,11 +159,12 @@ async fn subscribe_relay(ctx: Context, mut stop: oneshot::Receiver<Stop>) -> any
 
 async fn open_connection(
     ctx: &Context,
+    url: &str,
 ) -> anyhow::Result<(
     impl Sink<Message, Error = WsError>,
     impl Stream<Item = Result<Message, WsError>>,
 )> {
-    let url = url::Url::parse(RELAY_URL)?;
+    let url = url::Url::parse(url)?;
 
     let (ws_stream, _) = connect_async(url).await?;
     let (mut write, read) = ws_stream.split();

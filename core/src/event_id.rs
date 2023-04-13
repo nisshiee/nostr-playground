@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::{bytes_to_string, string_to_bytes, BytesParseError, BytesVisitor};
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct EventId([u8; 32]);
 
 impl EventId {
